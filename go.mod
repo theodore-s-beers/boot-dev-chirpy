@@ -1,4 +1,4 @@
-module github.com/theodore-s-beers/foo
+module github.com/theodore-s-beers/boot-dev-chirpy
 
 go 1.23.5
 

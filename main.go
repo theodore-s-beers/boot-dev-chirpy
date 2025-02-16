@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"github.com/theodore-s-beers/foo/internal/auth"
-	"github.com/theodore-s-beers/foo/internal/database"
+	"github.com/theodore-s-beers/boot-dev-chirpy/internal/auth"
+	"github.com/theodore-s-beers/boot-dev-chirpy/internal/database"
 )
 
 type apiConfig struct {
