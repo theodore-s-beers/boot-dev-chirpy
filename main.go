@@ -263,17 +263,17 @@ func main() {
 
 	serveMux.Handle("POST /api/login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		type loginReq struct {
-			Email            string `json:"email"`
-			Password         string `json:"password"`
-			ExpiresInSeconds int    `json:"expires_in_seconds,omitempty"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
 
 		type loginRes struct {
-			ID        uuid.UUID `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
-			Email     string    `json:"email"`
-			Token     string    `json:"token"`
+			ID           uuid.UUID `json:"id"`
+			CreatedAt    time.Time `json:"created_at"`
+			UpdatedAt    time.Time `json:"updated_at"`
+			Email        string    `json:"email"`
+			Token        string    `json:"token"`
+			RefreshToken string    `json:"refresh_token"`
 		}
 
 		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
@@ -298,27 +298,109 @@ func main() {
 			return
 		}
 
-		var expiration time.Duration
-		if req.ExpiresInSeconds == 0 {
-			expiration = time.Hour
-		} else {
-			expiration = time.Duration(req.ExpiresInSeconds) * time.Second
-		}
-		token, err := auth.MakeJWT(dbUser.ID, apiCfg.jwtSecret, expiration)
+		accessToken, err := auth.MakeJWT(dbUser.ID, apiCfg.jwtSecret)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(errorRes{Error: "Failed to generate JWT"})
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to generate access token"})
+			return
+		}
+
+		refreshToken, err := auth.MakeRefreshToken()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to generate refresh token"})
+			return
+		}
+
+		_, err = apiCfg.db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+			Token:     refreshToken,
+			UserID:    dbUser.ID,
+			ExpiresAt: time.Now().Add(60 * 24 * time.Hour),
+		})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to persist refresh token"})
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(loginRes{
-			ID:        dbUser.ID,
-			CreatedAt: dbUser.CreatedAt,
-			UpdatedAt: dbUser.UpdatedAt,
-			Email:     dbUser.Email,
-			Token:     token,
+			ID:           dbUser.ID,
+			CreatedAt:    dbUser.CreatedAt,
+			UpdatedAt:    dbUser.UpdatedAt,
+			Email:        dbUser.Email,
+			Token:        accessToken,
+			RefreshToken: refreshToken,
 		})
+	}))
+
+	serveMux.Handle("POST /api/refresh", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type tokenRes struct {
+			Token string `json:"token"`
+		}
+
+		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
+
+		refreshToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		dbRefreshToken, err := apiCfg.db.GetRefreshToken(r.Context(), refreshToken)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: "Invalid refresh token"})
+			return
+		}
+
+		if dbRefreshToken.RevokedAt.Valid {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: "Refresh token revoked"})
+			return
+		}
+
+		if dbRefreshToken.ExpiresAt.Before(time.Now()) {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: "Refresh token expired"})
+			return
+		}
+
+		newAccessToken, err := auth.MakeJWT(dbRefreshToken.UserID, apiCfg.jwtSecret)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to generate new access token"})
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(tokenRes{Token: newAccessToken})
+	}))
+
+	serveMux.Handle("POST /api/revoke", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		dbRefreshToken, err := apiCfg.db.GetRefreshToken(r.Context(), refreshToken)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: "Invalid refresh token"})
+			return
+		}
+
+		_, err = apiCfg.db.RevokeRefreshToken(r.Context(), dbRefreshToken.Token)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to revoke refresh token"})
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	serverStruct.ListenAndServe()

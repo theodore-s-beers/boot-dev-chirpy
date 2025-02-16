@@ -2,7 +2,6 @@ package auth
 
 import (
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,7 +23,7 @@ func TestJWT(t *testing.T) {
 	userID := uuid.New()
 	tokenSecret := "scuba"
 
-	token, err := MakeJWT(userID, tokenSecret, time.Hour)
+	token, err := MakeJWT(userID, tokenSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
