@@ -22,6 +22,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	platform       string
 	jwtSecret      string
+	polkaKey       string
 }
 
 type errorRes struct {
@@ -56,11 +57,13 @@ func main() {
 
 	platform := os.Getenv("PLATFORM")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")
 
 	apiCfg := apiConfig{
 		db:        dbQueries,
 		platform:  platform,
 		jwtSecret: jwtSecret,
+		polkaKey:  polkaKey,
 	}
 
 	serveMux := http.NewServeMux()
@@ -215,11 +218,36 @@ func main() {
 	serveMux.Handle("GET /api/chirps", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
 
-		chirps, err := apiCfg.db.GetAllChirps(r.Context())
+		params := r.URL.Query()
+		authorIDParam := params.Get("author_id")
+		sortParam := params.Get("sort")
+
+		var chirps []database.Chirp
+		var err error
+
+		if authorIDParam == "" {
+			chirps, err = apiCfg.db.GetAllChirps(r.Context())
+		} else {
+			authorID, err := uuid.Parse(authorIDParam)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(errorRes{Error: "Invalid author ID"})
+				return
+			}
+			chirps, err = apiCfg.db.GetChirpsByUserID(r.Context(), authorID)
+		}
+
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(errorRes{Error: "Failed to fetch chirps from database"})
 			return
+		}
+
+		// Lol
+		if sortParam == "desc" {
+			for i, j := 0, len(chirps)-1; i < j; i, j = i+1, j-1 {
+				chirps[i], chirps[j] = chirps[j], chirps[i]
+			}
 		}
 
 		resChirps := make([]chirpRes, len(chirps))
@@ -539,6 +567,19 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
+
+		apiKey, err := auth.GetAPIKey(r.Header)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		if apiKey != apiCfg.polkaKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: "Invalid API key"})
+			return
+		}
 
 		var req hookReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
