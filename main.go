@@ -37,10 +37,11 @@ type chirpRes struct {
 }
 
 type userRes struct {
-	ID        uuid.UUID `json:"id"`
-	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	IsChirpyRed bool      `json:"is_chirpy_red"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func main() {
@@ -134,10 +135,11 @@ func main() {
 
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(userRes{
-			ID:        dbUser.ID,
-			Email:     dbUser.Email,
-			CreatedAt: dbUser.CreatedAt,
-			UpdatedAt: dbUser.UpdatedAt,
+			ID:          dbUser.ID,
+			Email:       dbUser.Email,
+			IsChirpyRed: dbUser.IsChirpyRed,
+			CreatedAt:   dbUser.CreatedAt,
+			UpdatedAt:   dbUser.UpdatedAt,
 		})
 	}))
 
@@ -274,6 +276,7 @@ func main() {
 			CreatedAt    time.Time `json:"created_at"`
 			UpdatedAt    time.Time `json:"updated_at"`
 			Email        string    `json:"email"`
+			IsChirpyRed  bool      `json:"is_chirpy_red"`
 			Token        string    `json:"token"`
 			RefreshToken string    `json:"refresh_token"`
 		}
@@ -331,6 +334,7 @@ func main() {
 			CreatedAt:    dbUser.CreatedAt,
 			UpdatedAt:    dbUser.UpdatedAt,
 			Email:        dbUser.Email,
+			IsChirpyRed:  dbUser.IsChirpyRed,
 			Token:        accessToken,
 			RefreshToken: refreshToken,
 		})
@@ -470,10 +474,11 @@ func main() {
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(userRes{
-			ID:        updatedUser.ID,
-			Email:     updatedUser.Email,
-			CreatedAt: updatedUser.CreatedAt,
-			UpdatedAt: updatedUser.UpdatedAt,
+			ID:          updatedUser.ID,
+			Email:       updatedUser.Email,
+			IsChirpyRed: updatedUser.IsChirpyRed,
+			CreatedAt:   updatedUser.CreatedAt,
+			UpdatedAt:   updatedUser.UpdatedAt,
 		})
 	}))
 
@@ -519,6 +524,45 @@ func main() {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(errorRes{Error: "Failed to delete chirp from database"})
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	serveMux.Handle("POST /api/polka/webhooks", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type hookReq struct {
+			Event string `json:"event"`
+			Data  struct {
+				UserID uuid.UUID `json:"user_id"`
+			} `json:"data"`
+		}
+
+		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
+
+		var req hookReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(errorRes{Error: "Invalid JSON payload"})
+			return
+		}
+
+		if req.Event != "user.upgraded" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		_, err = apiCfg.db.GetUserByID(r.Context(), req.Data.UserID)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(errorRes{Error: "User not found in database"})
+			return
+		}
+
+		_, err = apiCfg.db.UpgradeToRed(r.Context(), req.Data.UserID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to upgrade user"})
 			return
 		}
 
