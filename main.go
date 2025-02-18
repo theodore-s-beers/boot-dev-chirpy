@@ -36,6 +36,13 @@ type chirpRes struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type userRes struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func main() {
 	godotenv.Load()
 
@@ -76,6 +83,8 @@ func main() {
 	}))
 
 	serveMux.Handle("POST /admin/reset", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json") // Response body (if any) is JSON
+
 		if apiCfg.platform != "dev" {
 			w.WriteHeader(http.StatusForbidden)
 			return
@@ -95,13 +104,6 @@ func main() {
 		type userReq struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
-		}
-
-		type userRes struct {
-			ID        uuid.UUID `json:"id"`
-			Email     string    `json:"email"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
 		}
 
 		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
@@ -379,6 +381,8 @@ func main() {
 	}))
 
 	serveMux.Handle("POST /api/revoke", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
+
 		refreshToken, err := auth.GetBearerToken(r.Header)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -397,6 +401,124 @@ func main() {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(errorRes{Error: "Failed to revoke refresh token"})
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	serveMux.Handle("PUT /api/users", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type userUpdateReq struct {
+			Password string `json:"password"`
+			Email    string `json:"email"`
+		}
+
+		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
+
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		validatedID, err := auth.ValidateJWT(token, apiCfg.jwtSecret)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		dbUser, err := apiCfg.db.GetUserByID(r.Context(), validatedID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to fetch user from database"})
+			return
+		}
+
+		var req userUpdateReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(errorRes{Error: "Invalid JSON payload"})
+			return
+		}
+
+		var newEmail string
+		if req.Email != "" {
+			newEmail = req.Email
+		} else {
+			newEmail = dbUser.Email
+		}
+
+		hashedPassword, err := auth.HashPassword(req.Password)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to hash password"})
+			return
+		}
+
+		updatedUser, err := apiCfg.db.UpdateUser(r.Context(), database.UpdateUserParams{
+			ID:             dbUser.ID,
+			Email:          newEmail,
+			HashedPassword: hashedPassword,
+		})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to update user in database"})
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(userRes{
+			ID:        updatedUser.ID,
+			Email:     updatedUser.Email,
+			CreatedAt: updatedUser.CreatedAt,
+			UpdatedAt: updatedUser.UpdatedAt,
+		})
+	}))
+
+	serveMux.Handle("DELETE /api/chirps/{chirpID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json") // Response is JSON regardless
+
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		userID, err := auth.ValidateJWT(token, apiCfg.jwtSecret)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(errorRes{Error: err.Error()})
+			return
+		}
+
+		chirpIDStr := r.PathValue("chirpID")
+		chirpID, err := uuid.Parse(chirpIDStr)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(errorRes{Error: "Invalid chirp ID"})
+			return
+		}
+
+		dbChirp, err := apiCfg.db.GetChirpByID(r.Context(), chirpID)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(errorRes{Error: "Chirp not found in database"})
+			return
+		}
+
+		if dbChirp.UserID != userID {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(errorRes{Error: "Chirp does not belong to requester"})
+			return
+		}
+
+		err = apiCfg.db.DeleteChirpByID(r.Context(), chirpID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(errorRes{Error: "Failed to delete chirp from database"})
 			return
 		}
 
