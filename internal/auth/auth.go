@@ -44,7 +44,7 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	parsedToken, err := jwt.ParseWithClaims(
 		tokenString,
 		&jwt.RegisteredClaims{},
-		func(token *jwt.Token) (interface{}, error) {
+		func(token *jwt.Token) (any, error) {
 			return []byte(tokenSecret), nil
 		},
 	)
