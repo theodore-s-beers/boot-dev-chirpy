@@ -228,7 +228,8 @@ func main() {
 		if authorIDParam == "" {
 			chirps, err = apiCfg.db.GetAllChirps(r.Context())
 		} else {
-			authorID, err := uuid.Parse(authorIDParam)
+			var authorID uuid.UUID
+			authorID, err = uuid.Parse(authorIDParam)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(errorRes{Error: "Invalid author ID"})

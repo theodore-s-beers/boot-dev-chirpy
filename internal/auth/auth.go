@@ -72,7 +72,7 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 func GetBearerToken(headers http.Header) (string, error) {
 	authHeader := headers.Get("Authorization")
 	if authHeader == "" {
-		return "", errors.New("No auth header")
+		return "", errors.New("no auth header")
 	}
 
 	trimmed := strings.TrimPrefix(authHeader, "Bearer")
@@ -92,7 +92,7 @@ func MakeRefreshToken() (string, error) {
 func GetAPIKey(headers http.Header) (string, error) {
 	keyHeader := headers.Get("Authorization")
 	if keyHeader == "" {
-		return "", errors.New("No auth header")
+		return "", errors.New("no auth header")
 	}
 
 	trimmed := strings.TrimPrefix(keyHeader, "ApiKey")
